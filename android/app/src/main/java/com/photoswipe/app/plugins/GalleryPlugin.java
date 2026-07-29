@@ -110,10 +110,12 @@ public class GalleryPlugin extends Plugin {
         JSONArray files = new JSONArray();
         for (Uri uri : uris) {
             try {
-                JSONObject f = new JSONObject();
-                // Default: use picker URI as fallback
-                f.put("uri", uri.toString());
+                String displayName = "photo_" + System.currentTimeMillis();
+                String mimeType = "image/jpeg";
+                long size = 0;
+                long mediaId = -1;
 
+                // Step 1: Query the picker URI for metadata
                 try (Cursor cursor = getContext().getContentResolver()
                         .query(uri, null, null, null, null)) {
                     if (cursor != null && cursor.moveToFirst()) {
@@ -122,35 +124,116 @@ public class GalleryPlugin extends Plugin {
                         int typeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
                         int sizeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
 
-                        if (nameIdx >= 0) f.put("name", cursor.getString(nameIdx));
-                        if (typeIdx >= 0) f.put("type", cursor.getString(typeIdx));
-                        if (sizeIdx >= 0) f.put("size", cursor.getLong(sizeIdx));
-
-                        // Resolve to proper MediaStore URI right now at pick time
-                        if (idIdx >= 0) {
-                            long mediaId = cursor.getLong(idIdx);
-                            String mime = typeIdx >= 0 ? cursor.getString(typeIdx) : "image/jpeg";
-                            Uri base = (mime != null && mime.startsWith("video/"))
-                                ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                                : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-                            Uri mediaStoreUri = ContentUris.withAppendedId(base, mediaId);
-                            f.put("uri", mediaStoreUri.toString());
-                            f.put("_pickerUri", uri.toString());
-                        }
+                        if (nameIdx >= 0) displayName = cursor.getString(nameIdx);
+                        if (typeIdx >= 0) mimeType = cursor.getString(typeIdx);
+                        if (sizeIdx >= 0) size = cursor.getLong(sizeIdx);
+                        if (idIdx >= 0) mediaId = cursor.getLong(idIdx);
                     }
                 }
-                if (!f.has("name")) f.put("name", "photo_" + System.currentTimeMillis());
-                if (!f.has("type")) f.put("type", "image/jpeg");
+
+                Uri mediaStoreUri = null;
+
+                // Step 2a: If we got a valid _id, construct MediaStore URI directly
+                if (mediaId > 0) {
+                    Uri base = mimeType.startsWith("video/")
+                        ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                    mediaStoreUri = ContentUris.withAppendedId(base, mediaId);
+                }
+
+                // Step 2b: Fallback — query MediaStore directly by display name + size
+                if (mediaStoreUri == null) {
+                    mediaStoreUri = findMediaByDisplayName(displayName, size, mimeType);
+                }
+
+                // Step 3: Build result
+                JSONObject f = new JSONObject();
+                f.put("name", displayName);
+                f.put("type", mimeType);
+                f.put("uri", mediaStoreUri != null
+                    ? mediaStoreUri.toString()
+                    : uri.toString());  // last-resort fallback to picker URI
+                if (mediaStoreUri != null) {
+                    f.put("_pickerUri", uri.toString());
+                }
 
                 files.put(f);
             } catch (Exception e) {
-                Log.e(TAG, "Error resolving URI", e);
+                Log.e(TAG, "Error resolving URI: " + uri, e);
             }
         }
         JSObject result = new JSObject();
         result.put("files", files);
         pendingPickCall.resolve(result);
         pendingPickCall = null;
+    }
+
+    /**
+     * Queries MediaStore directly by display name and size to find the
+     * real MediaStore _id. This is a fallback when picker URI doesn't
+     * expose _id.
+     */
+    private Uri findMediaByDisplayName(String displayName, long size, String mimeType) {
+        boolean isVideo = mimeType.startsWith("video/");
+        Uri collection = isVideo
+            ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+
+        String selection = MediaStore.MediaColumns.DISPLAY_NAME + " = ?";
+        String[] args = new String[]{displayName};
+
+        try (Cursor cursor = getContext().getContentResolver().query(
+                collection,
+                new String[]{MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE},
+                selection, args, MediaStore.MediaColumns.DATE_ADDED + " DESC")) {
+
+            if (cursor != null && cursor.moveToFirst()) {
+                long bestId = -1;
+                do {
+                    int idIdx = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
+                    int szIdx = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
+                    long rowId = idIdx >= 0 ? cursor.getLong(idIdx) : -1;
+                    long rowSize = szIdx >= 0 ? cursor.getLong(szIdx) : 0;
+
+                    // Exact size match is ideal
+                    if (size > 0 && rowSize == size) {
+                        return ContentUris.withAppendedId(collection, rowId);
+                    }
+                    // Keep first result as fallback
+                    if (bestId < 0) bestId = rowId;
+                } while (cursor.moveToNext());
+
+                if (bestId > 0) {
+                    return ContentUris.withAppendedId(collection, bestId);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error querying MediaStore", e);
+        }
+
+        // Also search the other collection (image vs video mismatch)
+        Uri altCollection = isVideo
+            ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+
+        try (Cursor cursor = getContext().getContentResolver().query(
+                altCollection,
+                new String[]{MediaStore.MediaColumns._ID},
+                MediaStore.MediaColumns.DISPLAY_NAME + " = ?",
+                new String[]{displayName},
+                MediaStore.MediaColumns.DATE_ADDED + " DESC")) {
+
+            if (cursor != null && cursor.moveToFirst()) {
+                int idIdx = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
+                if (idIdx >= 0) {
+                    return ContentUris.withAppendedId(altCollection, cursor.getLong(idIdx));
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error querying alt MediaStore", e);
+        }
+
+        return null;
     }
 
     /**
