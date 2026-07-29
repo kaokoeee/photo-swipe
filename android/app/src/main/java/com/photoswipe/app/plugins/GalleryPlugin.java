@@ -1,5 +1,6 @@
 package com.photoswipe.app.plugins;
 
+import android.app.PendingIntent;
 import android.content.ContentUris;
 import android.content.Intent;
 import android.database.Cursor;
@@ -191,16 +192,22 @@ public class GalleryPlugin extends Plugin {
                     } catch (SecurityException se) {
                         // If direct delete fails, try the pending delete intent
                         // (shows system dialog)
-                        Intent intent = null;
+                        PendingIntent pi = null;
                         if (Build.VERSION.SDK_INT >= 30) {
-                            // Build a delete request that the system will handle
-                            intent = MediaStore.createDeleteRequest(
+                            pi = MediaStore.createDeleteRequest(
                                 getContext().getContentResolver(),
                                 java.util.Collections.singletonList(uri));
                         }
-                        if (intent != null) {
-                            getContext().startActivity(intent);
-                            deleted++; // assume success since user confirmed
+                        if (pi != null) {
+                            try {
+                                pi.send();
+                                deleted++;
+                            } catch (PendingIntent.CanceledException pe) {
+                                JSONObject f = new JSONObject();
+                                f.put("uri", uriStr);
+                                f.put("reason", "Delete intent canceled: " + pe.getMessage());
+                                failed.put(f);
+                            }
                         } else {
                             JSONObject f = new JSONObject();
                             f.put("uri", uriStr);
