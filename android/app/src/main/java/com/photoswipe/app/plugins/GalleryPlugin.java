@@ -190,16 +190,20 @@ public class GalleryPlugin extends Plugin {
                     int rows = getContext().getContentResolver().delete(uri, null, null);
                     if (rows > 0) deleted++;
                     else {
-                        JSONObject f = new JSONObject();
-                        f.put("uri", uri.toString());
-                        f.put("reason", "No rows deleted");
-                        failed.put(f);
+                        try {
+                            JSONObject f = new JSONObject();
+                            f.put("uri", uri.toString());
+                            f.put("reason", "No rows deleted");
+                            failed.put(f);
+                        } catch (Exception ignored) {}
                     }
                 } catch (Exception e) {
-                    JSONObject f = new JSONObject();
-                    f.put("uri", uri.toString());
-                    f.put("reason", e.getMessage());
-                    failed.put(f);
+                    try {
+                        JSONObject f = new JSONObject();
+                        f.put("uri", uri.toString());
+                        f.put("reason", e.getMessage());
+                        failed.put(f);
+                    } catch (Exception ignored) {}
                 }
             }
             JSObject result = new JSObject();
