@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>照片扫地僧</title>
+<meta name="theme-color" content="#0f0f0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="照片扫地僧">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{
+    --bg:#0f0f0f;
+    --card-bg:#1a1a1a;
+    --text:#f0ede8;
+    --text-soft:#9a958b;
+    --keep:#2e7d4f;
+    --keep-glow:rgba(46,125,79,.4);
+    --del:#c0392b;
+    --del-glow:rgba(192,57,43,.4);
+    --bar-bg:rgba(20,20,20,.92);
+    --accent:#d4a853;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;touch-action:manipulation;}
+
+  body{
+    font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+    background:var(--bg);color:var(--text);
+    display:flex;flex-direction:column;
+    user-select:none;-webkit-user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* ── Top bar ── */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));
+    background:var(--bar-bg);z-index:10;flex-shrink:0;
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  }
+  .topbar .title{font-size:17px;font-weight:700;letter-spacing:.02em;}
+  .topbar .count{font-size:13px;color:var(--text-soft);}
+  .topbar .count strong{color:var(--keep);font-weight:700;}
+  .topbar .count .del-count{color:var(--del);}
+
+  /* ── Card area ── */
+  .card-stage{
+    flex:1;position:relative;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+    padding:16px;
+  }
+  .card-stack{position:relative;width:100%;max-width:380px;aspect-ratio:3/4;}
+
+  .card{
+    position:absolute;inset:0;
+    border-radius:16px;overflow:hidden;
+    background:var(--card-bg);
+    box-shadow:0 8px 40px rgba(0,0,0,.5);
+    transition:transform .35s cubic-bezier(.23,1,.32,1);
+    will-change:transform;cursor:grab;
+  }
+  .card:active{cursor:grabbing;}
+  .card.dragging{transition:none;}
+  .card.swiped-left{transform:translateX(-130%) rotate(-28deg);opacity:0;pointer-events:none;}
+  .card.swiped-right{transform:translateX(130%) rotate(28deg);opacity:0;pointer-events:none;}
+  .card.reverting{transition:transform .3s cubic-bezier(.23,1,.32,1);}
+
+  .card img,.card video{width:100%;height:100%;object-fit:cover;pointer-events:none;}
+
+  .card-stamp{
+    position:absolute;top:28px;z-index:2;
+    padding:8px 16px;border:3px solid;border-radius:6px;
+    font-size:28px;font-weight:900;letter-spacing:.04em;
+    pointer-events:none;opacity:0;transition:opacity .15s;
+  }
+  .card-stamp.keep{left:20px;color:var(--keep);border-color:var(--keep);transform:rotate(-15deg);}
+  .card-stamp.del{right:20px;color:var(--del);border-color:var(--del);transform:rotate(15deg);}
+  .card-stamp.show{opacity:1;}
+
+  /* ── Bottom actions ── */
+  .actions{
+    display:flex;align-items:center;justify-content:center;gap:24px;
+    padding:18px 16px;padding-bottom:max(18px,env(safe-area-inset-bottom));
+    background:var(--bar-bg);flex-shrink:0;
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  }
+  .btn-round{
+    width:56px;height:56px;border-radius:50%;border:none;
+    display:flex;align-items:center;justify-content:center;
+    font-size:26px;cursor:pointer;
+    transition:transform .12s,box-shadow .12s;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  .btn-round:active{transform:scale(.88);}
+  .btn-del{background:#2a1010;color:var(--del);box-shadow:0 4px 20px var(--del-glow);}
+  .btn-keep{background:#102820;color:var(--keep);box-shadow:0 4px 20px var(--keep-glow);}
+  .btn-undo{
+    width:42px;height:42px;border-radius:50%;
+    border:1px solid rgba(255,255,255,.2);background:transparent;
+    color:var(--text-soft);font-size:18px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    touch-action:manipulation;
+  }
+  .btn-undo:active{background:rgba(255,255,255,.08);}
+  .btn-undo:disabled{opacity:.25;pointer-events:none;}
+
+  /* ── Overlays ── */
+  .overlay{
+    position:fixed;inset:0;background:var(--bg);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    z-index:100;padding:32px;text-align:center;
+  }
+  .overlay .icon{font-size:64px;margin-bottom:20px;}
+  .overlay h2{font-size:24px;margin-bottom:8px;font-weight:700;}
+  .overlay p{color:var(--text-soft);font-size:15px;margin-bottom:24px;max-width:280px;line-height:1.6;}
+
+  .btn-main{
+    padding:14px 36px;border-radius:28px;border:none;
+    background:var(--accent);color:#0f0f0f;
+    font-size:16px;font-weight:700;cursor:pointer;letter-spacing:.02em;
+  }
+  .btn-main:active{opacity:.8;}
+  .btn-outline{
+    padding:10px 22px;border-radius:22px;border:1px solid rgba(255,255,255,.25);
+    background:transparent;color:var(--text);font-size:14px;cursor:pointer;
+  }
+  .btn-outline:active{background:rgba(255,255,255,.08);}
+
+  .result-cards{display:flex;gap:12px;margin:20px 0 28px;}
+  .result-card{
+    padding:14px 20px;border-radius:10px;text-align:center;
+    background:#1a1a1a;min-width:90px;
+  }
+  .result-card .big{font-size:36px;font-weight:800;}
+  .result-card .big.keep{color:var(--keep);}
+  .result-card .big.del{color:var(--del);}
+  .result-card .label{font-size:12px;color:var(--text-soft);margin-top:4px;}
+
+  .btn-group{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px;}
+  .btn-group .btn-sm{
+    padding:10px 20px;border-radius:22px;border:1px solid rgba(255,255,255,.25);
+    background:transparent;color:var(--text);font-size:14px;cursor:pointer;
+  }
+  .btn-group .btn-sm.primary{background:var(--accent);color:#0f0f0f;border:none;font-weight:700;}
+
+  #delListOverlay{overflow-y:auto;justify-content:flex-start;padding-top:max(40px,env(safe-area-inset-top));}
+  #delGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:100%;max-width:400px;margin-bottom:20px;}
+  .del-thumb{aspect-ratio:1;overflow:hidden;border-radius:4px;background:#1a1a1a;position:relative;}
+  .del-thumb img,.del-thumb video{width:100%;height:100%;object-fit:cover;}
+  .del-thumb .check{
+    position:absolute;top:6px;right:6px;width:22px;height:22px;
+    border-radius:50%;background:var(--accent);color:#0f0f0f;
+    font-size:12px;display:flex;align-items:center;justify-content:center;
+    font-weight:700;
+  }
+
+  .progress-bar{
+    position:absolute;bottom:0;left:0;right:0;height:2px;
+    background:rgba(255,255,255,.1);
+  }
+  .progress-bar .fill{height:100%;background:var(--accent);transition:width .3s;}
+
+  /* native indicator */
+  .native-badge{
+    display:inline-block;padding:3px 10px;border-radius:10px;
+    background:var(--keep);color:#fff;font-size:11px;font-weight:700;
+    margin-left:8px;vertical-align:middle;letter-spacing:.04em;
+  }
+  .native-badge.web{background:#555;}
+
+  @media(max-width:400px){
+    .btn-round{width:50px;height:50px;font-size:22px;}
+    .actions{gap:18px;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ====== START ====== -->
+<div class="overlay" id="startOverlay">
+  <div class="icon">📸</div>
+  <h2>照片扫地僧</h2>
+  <p id="startDesc">从相册随机抽取照片<br>👈 左滑删除 · 右滑保留 👉</p>
+  <div id="startButtons">
+    <button class="btn-main" id="btnNativePick" style="display:none;">📱 打开相册</button>
+    <label class="btn-main" id="btnWebPick" style="cursor:pointer;">
+      选择照片
+      <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display:none;">
+    </label>
+    <div class="hint" style="margin-top:16px;font-size:12px;color:var(--text-soft);" id="envHint"></div>
+  </div>
+</div>
+
+<!-- ====== COMPLETE ====== -->
+<div class="overlay complete" id="completeOverlay" style="display:none;">
+  <div class="icon">✨</div>
+  <h2>整理完成！</h2>
+  <div class="result-cards">
+    <div class="result-card"><div class="big keep" id="finalKeep">0</div><div class="label">💚 保留</div></div>
+    <div class="result-card"><div class="big del" id="finalDel">0</div><div class="label">🗑️ 标记删除</div></div>
+  </div>
+  <div class="btn-group">
+    <button class="btn-sm primary" id="btnNativeDelete" style="display:none;">🗑️ 一键删除</button>
+    <button class="btn-sm" onclick="showDeleteList()">📋 查看列表</button>
+    <button class="btn-sm" onclick="restart()">🔄 再来一次</button>
+  </div>
+</div>
+
+<!-- ====== DELETE LIST ====== -->
+<div class="overlay" id="delListOverlay" style="display:none;">
+  <h2 style="margin-top:20px;">🗑️ 待删除清单</h2>
+  <p style="margin-bottom:4px;" id="delListCount"></p>
+  <p style="font-size:12px;color:var(--text-soft);margin-bottom:16px;" id="delListHint">在原生 App 中可一键删除</p>
+  <div id="delGrid"></div>
+  <button class="btn-outline" onclick="document.getElementById('delListOverlay').style.display='none'">关闭</button>
+</div>
+
+<!-- ====== MAIN UI ====== -->
+<div class="topbar" id="topbar" style="display:none;">
+  <span class="title">照片扫地僧 <span class="native-badge web" id="envBadge">WEB</span></span>
+  <span class="count">
+    💚 <strong id="keepCount">0</strong>
+    🗑️ <strong class="del-count" id="delCount">0</strong>
+    <span style="color:var(--text-soft);" id="remainCount"></span>
+  </span>
+</div>
+<div class="card-stage" id="cardStage" style="display:none;">
+  <div class="card-stack" id="cardStack"></div>
+</div>
+<div class="actions" id="actions" style="display:none;">
+  <button class="btn-round btn-del" id="btnDel" title="删除">✕</button>
+  <button class="btn-undo" id="btnUndo" title="撤销" disabled>↩</button>
+  <button class="btn-round btn-keep" id="btnKeep" title="保留">♥</button>
+</div>
+
+<script>
+// ====================================================
+// CAPACITOR NATIVE BRIDGE DETECTION
+// ====================================================
+const isCapacitor = !!(window.Capacitor?.isNativePlatform?.());
+const isAndroid   = isCapacitor && window.Capacitor?.getPlatform() === 'android';
+
+// We define a bridge object. In the native APK, Capacitor will inject
+// a real plugin; in the browser/PWA, we fall back to <input type="file">.
+const NativeBridge = {
+  async pickFromGallery() {
+    // In native Capacitor, this calls the custom GalleryPlugin
+    if (isCapacitor && window.Capacitor?.Plugins?.GalleryPlugin) {
+      return window.Capacitor.Plugins.GalleryPlugin.pickPhotos();
+    }
+    // Fallback: trigger the hidden file input
+    return new Promise((resolve) => {
+      const input = document.getElementById('fileInput');
+      input.onchange = () => {
+        resolve(Array.from(input.files));
+      };
+      input.click();
+    });
+  },
+
+  async deletePhotos(uris) {
+    if (isCapacitor && window.Capacitor?.Plugins?.GalleryPlugin) {
+      return window.Capacitor.Plugins.GalleryPlugin.deletePhotos({ uris });
+    }
+    throw new Error('Native deletion only available in the APK');
+  }
+};
+
+// ====================================================
+// ENVIRONMENT DETECTION & UI SETUP
+// ====================================================
+(function initEnv() {
+  const badge = document.getElementById('envBadge');
+  const nativeBtn = document.getElementById('btnNativePick');
+  const webBtn = document.getElementById('btnWebPick');
+  const nativeDelBtn = document.getElementById('btnNativeDelete');
+  const envHint = document.getElementById('envHint');
+  const delListHint = document.getElementById('delListHint');
+  const startDesc = document.getElementById('startDesc');
+
+  if (isCapacitor) {
+    badge.textContent = 'NATIVE';
+    badge.className = 'native-badge';
+    nativeBtn.style.display = 'inline-block';
+    webBtn.style.display = 'none';
+    nativeDelBtn.style.display = 'inline-block';
+    envHint.textContent = '原生 App · 可直接访问相册并删除照片';
+    delListHint.textContent = '点击上方按钮即可从相册中彻底删除';
+    startDesc.innerHTML = '从相册随机抽取照片<br>👈 左滑删除 · 右滑保留 👉';
+  } else {
+    badge.textContent = 'PWA';
+    badge.className = 'native-badge web';
+    nativeBtn.style.display = 'none';
+    webBtn.style.display = 'inline-block';
+    nativeDelBtn.style.display = 'none';
+    envHint.textContent = 'PWA 模式 · 可安装到桌面 · 无法直接删相册文件';
+    delListHint.textContent = '请对照此列表在相册中手动删除';
+    startDesc.innerHTML = '从相册随机抽取照片<br>👈 左滑删除 · 右滑保留 👉<br><small style="color:#888;">安装 APK 版可一键删除相册照片</small>';
+  }
+})();
+
+// ====================================================
+// REGISTER PWA SERVICE WORKER
+// ====================================================
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ====================================================
+// GLOBAL STATE
+// ====================================================
+let allFiles = [];
+let fileUris = [];       // native URIs for deletion (only in Capacitor)
+let queue = [];
+let keepSet = new Set();
+let delSet = new Set();
+let history = [];
+let dragging = false;
+
+// DOM
+const $start    = document.getElementById('startOverlay');
+const $complete = document.getElementById('completeOverlay');
+const $delList  = document.getElementById('delListOverlay');
+const $topbar   = document.getElementById('topbar');
+const $stage    = document.getElementById('cardStage');
+const $actions  = document.getElementById('actions');
+const $stack    = document.getElementById('cardStack');
+const $keepCnt  = document.getElementById('keepCount');
+const $delCnt   = document.getElementById('delCount');
+const $remain   = document.getElementById('remainCount');
+const $btnDel   = document.getElementById('btnDel');
+const $btnKeep  = document.getElementById('btnKeep');
+const $btnUndo  = document.getElementById('btnUndo');
+
+// ====================================================
+// FILE INPUT (Web fallback)
+// ====================================================
+document.getElementById('fileInput').addEventListener('change', e => {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+  allFiles = files;
+  fileUris = files.map(() => null); // web mode: no native URIs
+  startSorting();
+});
+
+// ====================================================
+// NATIVE PICK (Capacitor)
+// ====================================================
+document.getElementById('btnNativePick').addEventListener('click', async () => {
+  try {
+    const result = await NativeBridge.pickFromGallery();
+    // result is { files: [{ uri, name, type }] } from the native plugin
+    if (result?.files?.length) {
+      // Convert native URIs to File-like objects for display
+      allFiles = result.files.map(f => ({
+        name: f.name || 'photo',
+        type: f.type || 'image/jpeg',
+        _nativeUri: f.uri,
+        // Capacitor can convert native URIs to web-accessible URLs
+        _url: isCapacitor
+          ? window.Capacitor.convertFileSrc(f.uri)
+          : f.uri
+      }));
+      fileUris = result.files.map(f => f.uri);
+      startSorting();
+    }
+  } catch (err) {
+    alert('打开相册失败: ' + err.message);
+  }
+});
+
+// ====================================================
+// NATIVE DELETE (Capacitor)
+// ====================================================
+document.getElementById('btnNativeDelete').addEventListener('click', async () => {
+  if (!confirm(`确定要从相册中永久删除 ${delSet.size} 张照片吗？此操作不可恢复。`)) return;
+
+  const uris = [...delSet].map(idx => fileUris[idx]).filter(Boolean);
+  if (!uris.length) {
+    alert('没有可删除的照片 URI');
+    return;
+  }
+
+  try {
+    await NativeBridge.deletePhotos(uris);
+    alert(`已成功删除 ${uris.length} 张照片`);
+    // Clear the del set since they're gone now
+    delSet.clear();
+    restart();
+  } catch (err) {
+    alert('删除失败: ' + err.message);
+  }
+});
+
+// ====================================================
+// SORTING LOGIC
+// ====================================================
+function startSorting() {
+  keepSet.clear(); delSet.clear(); history = [];
+  queue = shuffle([...Array(allFiles.length).keys()]);
+
+  $start.style.display = 'none';
+  $complete.style.display = 'none';
+  $delList.style.display = 'none';
+  $topbar.style.display = 'flex';
+  $stage.style.display = 'flex';
+  $actions.style.display = 'flex';
+
+  updateCounts();
+  showNext();
+}
+
+function showNext() {
+  while (queue.length) {
+    const idx = queue[0];
+    if (!keepSet.has(idx) && !delSet.has(idx)) {
+      renderCard(idx);
+      return;
+    }
+    queue.shift();
+  }
+  showComplete();
+}
+
+function progressPct() {
+  if (!allFiles.length) return 0;
+  return Math.round(((keepSet.size + delSet.size) / allFiles.length) * 100);
+}
+
+function updateCounts() {
+  $keepCnt.textContent = keepSet.size;
+  $delCnt.textContent = delSet.size;
+  const rem = allFiles.length - keepSet.size - delSet.size;
+  $remain.textContent = rem > 0 ? `剩余 ${rem}` : '完成';
+}
+
+// ====================================================
+// CARD RENDERING
+// ====================================================
+function renderCard(idx) {
+  const file = allFiles[idx];
+  // Determine display URL: native Capacitor src vs blob URL
+  let url;
+  if (file._url) {
+    url = file._url; // Capacitor converted file src
+  } else if (file._nativeUri) {
+    url = file._nativeUri;
+  } else {
+    url = URL.createObjectURL(file);
+  }
+
+  const isVideo = (file.type || '').startsWith('video/');
+
+  $stack.innerHTML = `
+    <div class="card" id="card" data-idx="${idx}">
+      ${isVideo ? `
+        <video src="${url}" id="cardMedia" muted playsinline loop></video>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;font-size:56px;color:rgba(255,255,255,.7);text-shadow:0 2px 12px rgba(0,0,0,.4);">▶</div>
+      ` : `
+        <img src="${url}" id="cardMedia" draggable="false">
+      `}
+      <div class="card-stamp keep" id="stampKeep">KEEP</div>
+      <div class="card-stamp del" id="stampDel">DEL</div>
+      <div class="progress-bar"><div class="fill" style="width:${progressPct()}%"></div></div>
+    </div>
+  `;
+
+  const card = document.getElementById('card');
+  card._url = (!file._url && !file._nativeUri) ? url : null;
+
+  bindSwipe(card);
+
+  if (isVideo) {
+    const vid = document.getElementById('cardMedia');
+    setTimeout(() => vid.play().catch(() => {}), 400);
+  }
+
+  $btnUndo.disabled = history.length === 0;
+  updateCounts();
+}
+
+// ====================================================
+// SWIPE LOGIC
+// ====================================================
+function bindSwipe(card) {
+  let startX = 0, startY = 0, offsetX = 0, offsetY = 0;
+  let started = false;
+  const stampKeep = card.querySelector('#stampKeep');
+  const stampDel  = card.querySelector('#stampDel');
+
+  function onStart(x, y) {
+    if (dragging) return;
+    startX = x; startY = y; offsetX = 0; offsetY = 0;
+    started = true; dragging = true;
+    card.classList.add('dragging');
+    card.classList.remove('reverting','swiped-left','swiped-right');
+    stampKeep.classList.remove('show');
+    stampDel.classList.remove('show');
+  }
+
+  function onMove(x, y) {
+    if (!started) return;
+    offsetX = x - startX;
+    offsetY = y - startY;
+    card.style.transform = `translateX(${offsetX}px) translateY(${offsetY}px) rotate(${offsetX * 0.05}deg)`;
+    const t = 80;
+    stampKeep.classList.toggle('show', offsetX > t);
+    stampDel.classList.toggle('show', offsetX < -t);
+  }
+
+  function onEnd() {
+    if (!started) return;
+    started = false; dragging = false;
+    card.classList.remove('dragging');
+    const threshold = card.offsetWidth * 0.3;
+
+    if (offsetX > threshold) {
+      commitSwipe('keep');
+    } else if (offsetX < -threshold) {
+      commitSwipe('del');
+    } else {
+      card.classList.add('reverting');
+      card.style.transform = '';
+      stampKeep.classList.remove('show');
+      stampDel.classList.remove('show');
+    }
+  }
+
+  card.addEventListener('touchstart', e => onStart(e.touches[0].clientX, e.touches[0].clientY), {passive:true});
+  card.addEventListener('touchmove', e => onMove(e.touches[0].clientX, e.touches[0].clientY), {passive:true});
+  card.addEventListener('touchend', onEnd);
+  card.addEventListener('touchcancel', onEnd);
+
+  card.addEventListener('mousedown', e => onStart(e.clientX, e.clientY));
+  window.addEventListener('mousemove', e => { if (dragging) onMove(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { if (dragging) onEnd(); });
+}
+
+function commitSwipe(action) {
+  const card = document.getElementById('card');
+  if (!card) return;
+  const idx = parseInt(card.dataset.idx);
+
+  card.classList.add(action === 'keep' ? 'swiped-right' : 'swiped-left');
+  card.style.transform = '';
+
+  if (action === 'keep') keepSet.add(idx); else delSet.add(idx);
+
+  history.push({ idx, action });
+  if (history.length > 100) history.shift();
+
+  if (card._url) URL.revokeObjectURL(card._url);
+
+  queue = queue.filter(i => i !== idx);
+  updateCounts();
+  $btnUndo.disabled = false;
+
+  setTimeout(() => showNext(), 350);
+}
+
+// ====================================================
+// BUTTONS
+// ====================================================
+$btnKeep.addEventListener('click', () => commitSwipe('keep'));
+$btnDel.addEventListener('click', () => commitSwipe('del'));
+
+$btnUndo.addEventListener('click', () => {
+  if (!history.length) return;
+  const last = history.pop();
+  if (last.action === 'keep') keepSet.delete(last.idx);
+  else delSet.delete(last.idx);
+  queue.unshift(last.idx);
+  updateCounts();
+  $btnUndo.disabled = history.length === 0;
+
+  const card = document.getElementById('card');
+  if (!card || $complete.style.display === 'flex') {
+    $complete.style.display = 'none';
+    showNext();
+  }
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') commitSwipe('del');
+  if (e.key === 'ArrowRight') commitSwipe('keep');
+  if ((e.ctrlKey && e.key === 'z') || e.key === 'ArrowUp') {
+    e.preventDefault(); $btnUndo.click();
+  }
+});
+
+// ====================================================
+// COMPLETE & DELETE LIST
+// ====================================================
+function showComplete() {
+  $stage.style.display = 'none';
+  $actions.style.display = 'none';
+  $topbar.style.display = 'none';
+  document.getElementById('finalKeep').textContent = keepSet.size;
+  document.getElementById('finalDel').textContent = delSet.size;
+  $complete.style.display = 'flex';
+}
+
+function showDeleteList() {
+  document.getElementById('delListCount').textContent = `共 ${delSet.size} 张`;
+  const grid = document.getElementById('delGrid');
+  grid.innerHTML = '';
+  [...delSet].forEach(idx => {
+    const file = allFiles[idx];
+    const div = document.createElement('div');
+    div.className = 'del-thumb';
+    let url = file._url || (file._nativeUri || URL.createObjectURL(file));
+
+    if ((file.type || '').startsWith('video/')) {
+      div.innerHTML = `<video src="${url}" muted></video>`;
+    } else {
+      div.innerHTML = `<img src="${url}">`;
+    }
+    grid.appendChild(div);
+  });
+  $delList.style.display = 'flex';
+}
+
+function restart() {
+  $complete.style.display = 'none';
+  $delList.style.display = 'none';
+  $start.style.display = 'flex';
+  $topbar.style.display = 'none';
+  $stage.style.display = 'none';
+  $actions.style.display = 'none';
+  $stack.innerHTML = '';
+  keepSet.clear(); delSet.clear(); history = []; queue = [];
+  allFiles = []; fileUris = [];
+  document.getElementById('fileInput').value = '';
+}
+
+// ====================================================
+// UTILS
+// ====================================================
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+</script>
+</body>
+</html>

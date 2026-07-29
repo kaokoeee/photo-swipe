@@ -1,0 +1,11 @@
+{
+  "appId": "com.photoswipe.app",
+  "appName": "照片扫地僧",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
