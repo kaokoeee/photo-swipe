@@ -265,6 +265,14 @@ public class GalleryPlugin extends Plugin {
 
         if (Build.VERSION.SDK_INT >= 30) {
             try {
+                // Debug: verify all URIs have numeric IDs
+                for (Uri u : uris) {
+                    String last = u.getLastPathSegment();
+                    if (last == null || !last.matches("\\d+")) {
+                        call.reject("Bad URI (last segment not numeric): " + u.toString());
+                        return;
+                    }
+                }
                 PendingIntent pi = MediaStore.createDeleteRequest(
                     getContext().getContentResolver(), uris);
                 pendingDeleteCall = call;
@@ -276,7 +284,8 @@ public class GalleryPlugin extends Plugin {
             } catch (IntentSender.SendIntentException e) {
                 call.reject("Failed to show delete dialog: " + e.getMessage());
             } catch (Exception e) {
-                call.reject("Delete error: " + e.getMessage());
+                String sampleUri = uris.isEmpty() ? "none" : uris.get(0).toString();
+                call.reject("Delete error [" + sampleUri + "]: " + e.getMessage());
             }
         } else {
             int deleted = 0;
