@@ -111,17 +111,32 @@ public class GalleryPlugin extends Plugin {
         for (Uri uri : uris) {
             try {
                 JSONObject f = new JSONObject();
+                // Default: use picker URI as fallback
                 f.put("uri", uri.toString());
 
                 try (Cursor cursor = getContext().getContentResolver()
                         .query(uri, null, null, null, null)) {
                     if (cursor != null && cursor.moveToFirst()) {
+                        int idIdx   = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
                         int nameIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
                         int typeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
                         int sizeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
+
                         if (nameIdx >= 0) f.put("name", cursor.getString(nameIdx));
                         if (typeIdx >= 0) f.put("type", cursor.getString(typeIdx));
                         if (sizeIdx >= 0) f.put("size", cursor.getLong(sizeIdx));
+
+                        // Resolve to proper MediaStore URI right now at pick time
+                        if (idIdx >= 0) {
+                            long mediaId = cursor.getLong(idIdx);
+                            String mime = typeIdx >= 0 ? cursor.getString(typeIdx) : "image/jpeg";
+                            Uri base = (mime != null && mime.startsWith("video/"))
+                                ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                                : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                            Uri mediaStoreUri = ContentUris.withAppendedId(base, mediaId);
+                            f.put("uri", mediaStoreUri.toString());
+                            f.put("_pickerUri", uri.toString());
+                        }
                     }
                 }
                 if (!f.has("name")) f.put("name", "photo_" + System.currentTimeMillis());
@@ -152,29 +167,25 @@ public class GalleryPlugin extends Plugin {
             return;
         }
 
-        // Resolve picker URIs to proper MediaStore URIs
-        List<Uri> mediaStoreUris = new ArrayList<>();
+        // URIs should already be resolved to MediaStore format at pick time
+        List<Uri> uris = new ArrayList<>();
         for (int i = 0; i < uriArray.length(); i++) {
             try {
-                Uri pickerUri = Uri.parse(uriArray.getString(i));
-                Uri resolved = resolveToMediaStoreUri(pickerUri);
-                if (resolved != null) {
-                    mediaStoreUris.add(resolved);
-                }
+                uris.add(Uri.parse(uriArray.getString(i)));
             } catch (Exception ignored) {}
         }
 
-        if (mediaStoreUris.isEmpty()) {
-            call.reject("No valid URIs to delete");
+        if (uris.isEmpty()) {
+            call.reject("No valid URIs");
             return;
         }
 
         if (Build.VERSION.SDK_INT >= 30) {
             try {
                 PendingIntent pi = MediaStore.createDeleteRequest(
-                    getContext().getContentResolver(), mediaStoreUris);
+                    getContext().getContentResolver(), uris);
                 pendingDeleteCall = call;
-                pendingDeleteCount = mediaStoreUris.size();
+                pendingDeleteCount = uris.size();
                 getActivity().startIntentSenderForResult(
                     pi.getIntentSender(),
                     DELETE_REQUEST_CODE,
@@ -187,7 +198,7 @@ public class GalleryPlugin extends Plugin {
         } else {
             int deleted = 0;
             JSONArray failed = new JSONArray();
-            for (Uri uri : mediaStoreUris) {
+            for (Uri uri : uris) {
                 try {
                     int rows = getContext().getContentResolver().delete(uri, null, null);
                     if (rows > 0) deleted++;
@@ -215,47 +226,4 @@ public class GalleryPlugin extends Plugin {
         }
     }
 
-    /**
-     * Converts a picker/content URI to a proper MediaStore URI
-     * (content://media/external/images/media/ID) that createDeleteRequest accepts.
-     */
-    private Uri resolveToMediaStoreUri(Uri uri) {
-        // If it's already a standard MediaStore URI, return as-is
-        String uriStr = uri.toString();
-        if (uriStr.startsWith("content://media/")) {
-            return uri;
-        }
-
-        // Query the picker URI to get the real MediaStore ID and MIME type
-        try (Cursor cursor = getContext().getContentResolver().query(
-                uri,
-                new String[]{
-                    MediaStore.MediaColumns._ID,
-                    MediaStore.MediaColumns.MIME_TYPE,
-                    MediaStore.MediaColumns.DISPLAY_NAME
-                },
-                null, null, null)) {
-
-            if (cursor != null && cursor.moveToFirst()) {
-                int idIdx = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
-                int typeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
-
-                if (idIdx >= 0) {
-                    long mediaId = cursor.getLong(idIdx);
-                    String mimeType = typeIdx >= 0 ? cursor.getString(typeIdx) : "image/jpeg";
-
-                    Uri baseUri;
-                    if (mimeType != null && mimeType.startsWith("video/")) {
-                        baseUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-                    } else {
-                        baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-                    }
-                    return ContentUris.withAppendedId(baseUri, mediaId);
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to resolve URI: " + uri, e);
-        }
-        return null;
-    }
 }
