@@ -2,6 +2,7 @@ package com.photoswipe.app.plugins;
 
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.content.ContentUris;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.database.Cursor;
@@ -151,27 +152,29 @@ public class GalleryPlugin extends Plugin {
             return;
         }
 
-        // Parse all URIs
-        List<Uri> uris = new ArrayList<>();
+        // Resolve picker URIs to proper MediaStore URIs
+        List<Uri> mediaStoreUris = new ArrayList<>();
         for (int i = 0; i < uriArray.length(); i++) {
             try {
-                uris.add(Uri.parse(uriArray.getString(i)));
+                Uri pickerUri = Uri.parse(uriArray.getString(i));
+                Uri resolved = resolveToMediaStoreUri(pickerUri);
+                if (resolved != null) {
+                    mediaStoreUris.add(resolved);
+                }
             } catch (Exception ignored) {}
         }
 
-        if (uris.isEmpty()) {
-            call.reject("No valid URIs");
+        if (mediaStoreUris.isEmpty()) {
+            call.reject("No valid URIs to delete");
             return;
         }
 
         if (Build.VERSION.SDK_INT >= 30) {
-            // Android 11+ scoped storage: use the system delete request
-            // This shows ONE system confirmation dialog for all photos
             try {
                 PendingIntent pi = MediaStore.createDeleteRequest(
-                    getContext().getContentResolver(), uris);
+                    getContext().getContentResolver(), mediaStoreUris);
                 pendingDeleteCall = call;
-                pendingDeleteCount = uris.size();
+                pendingDeleteCount = mediaStoreUris.size();
                 getActivity().startIntentSenderForResult(
                     pi.getIntentSender(),
                     DELETE_REQUEST_CODE,
@@ -182,10 +185,9 @@ public class GalleryPlugin extends Plugin {
                 call.reject("Delete error: " + e.getMessage());
             }
         } else {
-            // Android 10 and below: direct delete
             int deleted = 0;
             JSONArray failed = new JSONArray();
-            for (Uri uri : uris) {
+            for (Uri uri : mediaStoreUris) {
                 try {
                     int rows = getContext().getContentResolver().delete(uri, null, null);
                     if (rows > 0) deleted++;
@@ -211,5 +213,49 @@ public class GalleryPlugin extends Plugin {
             result.put("failed", failed);
             call.resolve(result);
         }
+    }
+
+    /**
+     * Converts a picker/content URI to a proper MediaStore URI
+     * (content://media/external/images/media/ID) that createDeleteRequest accepts.
+     */
+    private Uri resolveToMediaStoreUri(Uri uri) {
+        // If it's already a standard MediaStore URI, return as-is
+        String uriStr = uri.toString();
+        if (uriStr.startsWith("content://media/")) {
+            return uri;
+        }
+
+        // Query the picker URI to get the real MediaStore ID and MIME type
+        try (Cursor cursor = getContext().getContentResolver().query(
+                uri,
+                new String[]{
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                    MediaStore.MediaColumns.DISPLAY_NAME
+                },
+                null, null, null)) {
+
+            if (cursor != null && cursor.moveToFirst()) {
+                int idIdx = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
+                int typeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
+
+                if (idIdx >= 0) {
+                    long mediaId = cursor.getLong(idIdx);
+                    String mimeType = typeIdx >= 0 ? cursor.getString(typeIdx) : "image/jpeg";
+
+                    Uri baseUri;
+                    if (mimeType != null && mimeType.startsWith("video/")) {
+                        baseUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                    } else {
+                        baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                    }
+                    return ContentUris.withAppendedId(baseUri, mediaId);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to resolve URI: " + uri, e);
+        }
+        return null;
     }
 }
