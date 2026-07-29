@@ -115,11 +115,20 @@ public class GalleryPlugin extends Plugin {
                 long size = 0;
                 long mediaId = -1;
 
-                // Step 1: Query the picker URI for metadata
+                // Step 1: Query the picker URI for ALL metadata
                 try (Cursor cursor = getContext().getContentResolver()
                         .query(uri, null, null, null, null)) {
                     if (cursor != null && cursor.moveToFirst()) {
-                        int idIdx   = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
+                        // Try multiple column name variants for the ID
+                        for (String col : new String[]{
+                                MediaStore.MediaColumns._ID,  // "_id"
+                                "id", "rowid", "_ID", "media_id"}) {
+                            int idx = cursor.getColumnIndex(col);
+                            if (idx >= 0) {
+                                mediaId = cursor.getLong(idx);
+                                break;
+                            }
+                        }
                         int nameIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
                         int typeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
                         int sizeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
@@ -127,13 +136,20 @@ public class GalleryPlugin extends Plugin {
                         if (nameIdx >= 0) displayName = cursor.getString(nameIdx);
                         if (typeIdx >= 0) mimeType = cursor.getString(typeIdx);
                         if (sizeIdx >= 0) size = cursor.getLong(sizeIdx);
-                        if (idIdx >= 0) mediaId = cursor.getLong(idIdx);
+                    }
+                }
+
+                // Step 2: Try to get numeric ID from the URI path itself
+                if (mediaId <= 0) {
+                    String last = uri.getLastPathSegment();
+                    if (last != null && last.matches("\\d+")) {
+                        mediaId = Long.parseLong(last);
                     }
                 }
 
                 Uri mediaStoreUri = null;
 
-                // Step 2a: If we got a valid _id, construct MediaStore URI directly
+                // Step 3: Construct MediaStore URI from the ID we found
                 if (mediaId > 0) {
                     Uri base = mimeType.startsWith("video/")
                         ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
@@ -141,18 +157,20 @@ public class GalleryPlugin extends Plugin {
                     mediaStoreUri = ContentUris.withAppendedId(base, mediaId);
                 }
 
-                // Step 2b: Fallback — query MediaStore directly by display name + size
+                // Step 4: Fallback — query MediaStore directly
                 if (mediaStoreUri == null) {
                     mediaStoreUri = findMediaByDisplayName(displayName, size, mimeType);
                 }
 
-                // Step 3: Build result
                 JSONObject f = new JSONObject();
                 f.put("name", displayName);
                 f.put("type", mimeType);
+                // Save debug info
+                f.put("_idFound", mediaId);
+                f.put("_resolved", mediaStoreUri != null);
                 f.put("uri", mediaStoreUri != null
                     ? mediaStoreUri.toString()
-                    : uri.toString());  // last-resort fallback to picker URI
+                    : uri.toString());
                 if (mediaStoreUri != null) {
                     f.put("_pickerUri", uri.toString());
                 }
